@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package hipstershop;
+
+option java_package = "hipstershop";
+option java_outer_classname = "AdProto";
+option java_multiple_files = true;
+
+service AdService {
+  rpc GetAds(AdRequest) returns (AdResponse) {}
+}
+
+message AdRequest {
+  repeated string context_keys = 1;
+}
+
+message AdResponse {
+  repeated Ad ads = 1;
+}
+
+message Ad {
+  string redirect_url = 1;
+  string text = 2;
+}
