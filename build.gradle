@@ -27,7 +27,8 @@ tasks.withType(JavaCompile) {
 // Force all transitive Netty deps to patched version (CVE-2026-33870, CVE-2026-33871)
 configurations.configureEach {
     resolutionStrategy.eachDependency { DependencyResolveDetails details ->
-        if (details.requested.group == 'io.netty') {
+        if (details.requested.group == 'io.netty'
+                && !details.requested.name.contains('tcnative')) {
             details.useVersion '4.1.132.Final'
             details.because 'CVE-2026-33870, CVE-2026-33871 fixed in 4.1.132.Final'
         }
