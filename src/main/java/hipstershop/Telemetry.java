@@ -14,6 +14,8 @@ import io.pyroscope.javaagent.config.Config;
 import io.pyroscope.javaagent.EventType;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 
 /**
  * Bootstraps all observability concerns:
@@ -52,7 +54,9 @@ final class Telemetry {
 
         OpenTelemetrySdk otelSdk = OpenTelemetrySdk.builder()
             .setTracerProvider(tracerProvider)
+            .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
             .buildAndRegisterGlobal();
+            
 
         logger.info("OTel tracing initialised → {}/v1/traces", otlpEndpoint);
         return otelSdk;

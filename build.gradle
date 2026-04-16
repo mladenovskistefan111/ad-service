@@ -40,6 +40,7 @@ dependencies {
     implementation "io.opentelemetry:opentelemetry-exporter-otlp:${otelVersion}"
     implementation "io.opentelemetry.semconv:opentelemetry-semconv:1.25.0-alpha"
     implementation "io.opentelemetry.instrumentation:opentelemetry-grpc-1.6:2.9.0-alpha"
+    implementation "io.opentelemetry:opentelemetry-extension-trace-propagators:${otelVersion}"
 
     // Micrometer — Prometheus metrics
     implementation "io.micrometer:micrometer-registry-prometheus:${micrometerVersion}"
@@ -53,6 +54,16 @@ dependencies {
 
     runtimeOnly "io.netty:netty-tcnative-boringssl-static:2.0.75.Final"
     runtimeOnly "com.fasterxml.jackson.core:jackson-databind:2.19.0"
+
+    // Testing
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:5.11.4"
+    testImplementation "io.grpc:grpc-testing:${grpcVersion}"
+    testImplementation "io.micrometer:micrometer-registry-prometheus:${micrometerVersion}"
+}
+
+test {
+    useJUnitPlatform()
 }
 
 protobuf {
