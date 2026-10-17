@@ -16,7 +16,7 @@ def grpcVersion        = '1.79.0'
 def protocVersion      = '4.34.0'
 def otelVersion        = '1.49.0'
 def otelInstrVersion   = '2.16.0'
-def pyroscopeVersion   = '0.14.0'
+def pyroscopeVersion   = '2.9.2'
 
 tasks.withType(JavaCompile) {
     sourceCompatibility = JavaVersion.VERSION_21
