@@ -1,27 +1,32 @@
 package hipstershop;
 
-import io.micrometer.prometheus.PrometheusConfig;
-import io.micrometer.prometheus.PrometheusMeterRegistry;
-import io.opentelemetry.api.GlobalOpenTelemetry;
-import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter;
+import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter;
+import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter;
+import io.opentelemetry.instrumentation.log4j.appender.v2_17.OpenTelemetryAppender;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.logs.SdkLoggerProvider;
+import io.opentelemetry.sdk.logs.export.BatchLogRecordProcessor;
+import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
-import io.opentelemetry.semconv.ResourceAttributes;
+import io.pyroscope.javaagent.EventType;
 import io.pyroscope.javaagent.PyroscopeAgent;
 import io.pyroscope.javaagent.config.Config;
-import io.pyroscope.javaagent.EventType;
+import java.net.InetAddress;
+import java.time.Duration;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import io.opentelemetry.context.propagation.ContextPropagators;
-import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 
 /**
  * Bootstraps all observability concerns:
- * - OpenTelemetry tracing (OTLP HTTP → Alloy → Tempo)
- * - Prometheus metrics registry (scraped by Alloy → Mimir)
- * - Pyroscope continuous profiling
+ * - OpenTelemetry traces, metrics and logs, all pushed over OTLP/gRPC (→ Alloy → Tempo / Mimir / Loki)
+ * - Pyroscope continuous profiling (SDK push protocol; PYROSCOPE_ADDR may point at Alloy)
  */
 final class Telemetry {
 
@@ -30,48 +35,61 @@ final class Telemetry {
     private Telemetry() {}
 
     /**
-     * Initialises OTel tracing and returns it. Must be called before the gRPC server starts
-     * so that the OTel gRPC interceptor can attach to spans correctly.
+     * Initialises the OTel SDK (traces + metrics + logs) and registers it globally. Must be called
+     * before the gRPC server starts so that the OTel gRPC interceptor attaches correctly.
+     *
+     * <p>Endpoint: {@code OTEL_EXPORTER_OTLP_ENDPOINT} (scheme required, e.g. {@code http://alloy:4317});
+     * {@code COLLECTOR_SERVICE_ADDR} (host:port) is a legacy fallback.
      */
-    static OpenTelemetrySdk initTracing() {
+    static OpenTelemetrySdk init() {
         String serviceName = System.getenv().getOrDefault("OTEL_SERVICE_NAME", "ad-service");
         String serviceVersion = System.getenv().getOrDefault("SERVICE_VERSION", "1.0.0");
-        String otlpEndpoint = System.getenv().getOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+        String endpoint = resolveEndpoint();
+        long metricIntervalMs = Long.parseLong(System.getenv().getOrDefault("OTEL_METRIC_EXPORT_INTERVAL", "15000"));
 
         Resource resource = Resource.getDefault().toBuilder()
-            .put(ResourceAttributes.SERVICE_NAME, serviceName)
-            .put(ResourceAttributes.SERVICE_VERSION, serviceVersion)
-            .build();
-
-        OtlpHttpSpanExporter spanExporter = OtlpHttpSpanExporter.builder()
-            .setEndpoint(otlpEndpoint + "/v1/traces")
+            .put(AttributeKey.stringKey("service.name"), serviceName)
+            .put(AttributeKey.stringKey("service.version"), serviceVersion)
+            // Distinguishes replicas: in Kubernetes the hostname is the pod name.
+            .put("service.instance.id", instanceId())
             .build();
 
         SdkTracerProvider tracerProvider = SdkTracerProvider.builder()
             .setResource(resource)
-            .addSpanProcessor(BatchSpanProcessor.builder(spanExporter).build())
+            .addSpanProcessor(BatchSpanProcessor.builder(
+                OtlpGrpcSpanExporter.builder().setEndpoint(endpoint).build()).build())
+            .build();
+
+        SdkMeterProvider meterProvider = SdkMeterProvider.builder()
+            .setResource(resource)
+            .registerMetricReader(PeriodicMetricReader.builder(
+                    OtlpGrpcMetricExporter.builder().setEndpoint(endpoint).build())
+                .setInterval(Duration.ofMillis(metricIntervalMs))
+                .build())
+            .build();
+
+        SdkLoggerProvider loggerProvider = SdkLoggerProvider.builder()
+            .setResource(resource)
+            .addLogRecordProcessor(BatchLogRecordProcessor.builder(
+                OtlpGrpcLogRecordExporter.builder().setEndpoint(endpoint).build()).build())
             .build();
 
         OpenTelemetrySdk otelSdk = OpenTelemetrySdk.builder()
             .setTracerProvider(tracerProvider)
+            .setMeterProvider(meterProvider)
+            .setLoggerProvider(loggerProvider)
             .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
             .buildAndRegisterGlobal();
-            
 
-        logger.info("OTel tracing initialised → {}/v1/traces", otlpEndpoint);
+        // Log4j2 records (configured in log4j2.xml via the OpenTelemetry appender) now flow to the SDK.
+        OpenTelemetryAppender.install(otelSdk);
+
+        logger.info("OTel traces, metrics and logs initialised → {} (OTLP/gRPC)", endpoint);
         return otelSdk;
     }
 
     /**
-     * Creates and returns a Prometheus meter registry. The caller is responsible
-     * for starting the HTTP scrape endpoint.
-     */
-    static PrometheusMeterRegistry initMetrics() {
-        return new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
-    }
-
-    /**
-     * Starts Pyroscope continuous profiling (CPU + allocation profiles).
+     * Starts Pyroscope continuous profiling (CPU profile).
      */
     static void initProfiling() {
         String pyroscopeAddr = System.getenv().getOrDefault("PYROSCOPE_ADDR", "http://localhost:4040");
@@ -86,5 +104,29 @@ final class Telemetry {
         );
 
         logger.info("Pyroscope profiling initialised → {}", pyroscopeAddr);
+    }
+
+    private static String resolveEndpoint() {
+        String endpoint = System.getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (endpoint != null && !endpoint.isBlank()) {
+            return endpoint;
+        }
+        String legacy = System.getenv("COLLECTOR_SERVICE_ADDR");
+        if (legacy != null && !legacy.isBlank()) {
+            return "http://" + legacy;
+        }
+        return "http://localhost:4317";
+    }
+
+    private static String instanceId() {
+        String host = System.getenv("HOSTNAME");
+        if (host != null && !host.isBlank()) {
+            return host;
+        }
+        try {
+            return InetAddress.getLocalHost().getHostName();
+        } catch (Exception e) {
+            return "unknown";
+        }
     }
 }

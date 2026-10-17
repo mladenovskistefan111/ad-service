@@ -1,85 +1,75 @@
 package hipstershop;
 
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Timer;
-import io.micrometer.core.instrument.Tags;
-import io.micrometer.prometheus.PrometheusMeterRegistry;
-import java.time.Duration;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.metrics.DoubleHistogram;
+import io.opentelemetry.api.metrics.LongCounter;
+import io.opentelemetry.api.metrics.LongUpDownCounter;
+import io.opentelemetry.api.metrics.Meter;
+import java.util.List;
 
 /**
  * Custom gRPC server metrics matching the OTel RPC semantic conventions
  * used across the platform (rpc_server_duration_seconds, rpc_server_requests_total,
  * rpc_server_active_requests) so all Grafana dashboards work consistently.
+ *
+ * <p>Instruments are exported over OTLP/gRPC by the SDK configured in {@link Telemetry}.
  */
 final class Metrics {
 
     private static final String RPC_SYSTEM  = "grpc";
     private static final String RPC_SERVICE = "hipstershop.AdService";
 
-    private final PrometheusMeterRegistry registry;
+    private static final AttributeKey<String> RPC_SYSTEM_KEY  = AttributeKey.stringKey("rpc_system");
+    private static final AttributeKey<String> RPC_SERVICE_KEY = AttributeKey.stringKey("rpc_service");
+    private static final AttributeKey<String> RPC_METHOD_KEY  = AttributeKey.stringKey("rpc_method");
+    private static final AttributeKey<String> RPC_STATUS_KEY  = AttributeKey.stringKey("rpc_grpc_status_code");
 
-    private final ConcurrentHashMap<String, AtomicLong> activeRequests = new ConcurrentHashMap<>();
+    private final DoubleHistogram duration;
+    private final LongCounter requests;
+    private final LongUpDownCounter active;
 
-    Metrics(PrometheusMeterRegistry registry) {
-        this.registry = registry;
-    }
+    Metrics(OpenTelemetry openTelemetry) {
+        Meter meter = openTelemetry.getMeter("ad-service-grpc");
 
-    PrometheusMeterRegistry getRegistry() {
-        return registry;
+        // Exposed in Prometheus as rpc_server_duration_seconds_{bucket,count,sum}
+        duration = meter.histogramBuilder("rpc_server_duration")
+            .setDescription("Duration of inbound gRPC calls")
+            .setUnit("s")
+            .setExplicitBucketBoundariesAdvice(List.of(
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0))
+            .build();
+        requests = meter.counterBuilder("rpc_server_requests_total")
+            .setDescription("Total number of inbound gRPC calls")
+            .build();
+        active = meter.upDownCounterBuilder("rpc_server_active_requests")
+            .setDescription("Number of in-flight gRPC calls")
+            .build();
     }
 
     void incrementActive(String method) {
-        activeGauge(method).incrementAndGet();
+        active.add(1, baseAttributes(method));
     }
 
     void recordCall(String method, String statusCode, double elapsedSeconds) {
-        Tags tags = Tags.of(
-            "rpc_system",           RPC_SYSTEM,
-            "rpc_service",          RPC_SERVICE,
-            "rpc_method",           method,
-            "rpc_grpc_status_code", statusCode
-        );
+        Attributes withStatus = Attributes.builder()
+            .put(RPC_SYSTEM_KEY, RPC_SYSTEM)
+            .put(RPC_SERVICE_KEY, RPC_SERVICE)
+            .put(RPC_METHOD_KEY, method)
+            .put(RPC_STATUS_KEY, statusCode)
+            .build();
 
-        // Timer produces _bucket, _count, _sum — exactly what the dashboard queries
-        Timer.builder("rpc_server_duration")
-            .description("Duration of inbound gRPC calls")
-            .tags(tags)
-            .serviceLevelObjectives(
-                Duration.ofMillis(1),
-                Duration.ofMillis(5),
-                Duration.ofMillis(10),
-                Duration.ofMillis(25),
-                Duration.ofMillis(50),
-                Duration.ofMillis(100),
-                Duration.ofMillis(250),
-                Duration.ofMillis(500),
-                Duration.ofSeconds(1),
-                Duration.ofMillis(2500),
-                Duration.ofSeconds(5),
-                Duration.ofSeconds(10)
-            )
-            .register(registry)
-            .record((long) (elapsedSeconds * 1_000_000_000L), TimeUnit.NANOSECONDS);
-
-        // Decrement active requests
-        activeGauge(method).decrementAndGet();
+        duration.record(elapsedSeconds, withStatus);
+        requests.add(1, withStatus);
+        active.add(-1, baseAttributes(method));
     }
 
-    private AtomicLong activeGauge(String method) {
-        return activeRequests.computeIfAbsent(method, m -> {
-            AtomicLong gauge = new AtomicLong(0);
-            io.micrometer.core.instrument.Gauge.builder("rpc_server_active_requests", gauge, AtomicLong::get)
-                .description("Number of in-flight gRPC calls")
-                .tags(
-                    "rpc_system",  RPC_SYSTEM,
-                    "rpc_service", RPC_SERVICE,
-                    "rpc_method",  m
-                )
-                .register(registry);
-            return gauge;
-        });
+    private static Attributes baseAttributes(String method) {
+        return Attributes.builder()
+            .put(RPC_SYSTEM_KEY, RPC_SYSTEM)
+            .put(RPC_SERVICE_KEY, RPC_SERVICE)
+            .put(RPC_METHOD_KEY, method)
+            .build();
     }
 }

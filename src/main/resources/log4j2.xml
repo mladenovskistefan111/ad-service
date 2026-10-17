@@ -7,6 +7,8 @@
         <EventTemplateAdditionalField key="name"     format="JSON" value='{"$resolver": "logger", "field": "name"}'/>
       </JsonTemplateLayout>
     </Console>
+    <!-- Mirrors every record to the OTel logs pipeline (OTLP/gRPC) with trace/span ids -->
+    <OpenTelemetry name="OpenTelemetryAppender"/>
   </Appenders>
   <Loggers>
     <Logger name="io.grpc.netty" level="INFO"/>
@@ -14,6 +16,7 @@
     <Logger name="sun.net"       level="INFO"/>
     <Root level="INFO">
       <AppenderRef ref="STDOUT"/>
+      <AppenderRef ref="OpenTelemetryAppender"/>
     </Root>
   </Loggers>
 </Configuration>
