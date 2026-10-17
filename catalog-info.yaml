@@ -12,6 +12,7 @@ metadata:
     backstage.io/kubernetes-label-selector: app.kubernetes.io/name=ad-service
     argocd/app-name: dev-ad-service
     grafana/dashboard-selector: "tags @> 'ad'"
+    grafana/alert-label-selector: "service=ad-service"
     grafana/overview-dashboard: "https://grafana.platform-demo.test/d/ad-service-overview"
   tags: [java, grpc]
   links:
