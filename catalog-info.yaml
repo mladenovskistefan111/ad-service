@@ -1,0 +1,41 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ad-service
+  title: ad-service
+  description: "A gRPC service that serves contextual advertisements for the platform-demo e-commerce platform."
+  annotations:
+    github.com/project-slug: platform-boutique/app-ad-service
+    backstage.io/source-location: url:https://github.com/platform-boutique/app-ad-service/tree/main/
+    backstage.io/techdocs-ref: dir:.
+    backstage.io/kubernetes-id: ad-service
+    backstage.io/kubernetes-namespace: platform-demo
+    backstage.io/kubernetes-label-selector: app.kubernetes.io/name=ad-service
+    argocd/app-name: dev-ad-service
+    grafana/dashboard-selector: "tags @> 'ad'"
+    grafana/alert-label-selector: "service=ad-service"
+  tags: [java, grpc]
+  links:
+    - { url: "https://argocd.platform-demo.click/applications/argocd/dev-ad-service", title: Argo CD, icon: dashboard }
+spec:
+  type: service
+  lifecycle: experimental
+  owner: group:default/maintainers
+  system: shop
+  providesApis: [ad-service-api]
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: ad-service-api
+  description: gRPC interface of ad-service (Protocol Buffers).
+  tags: [grpc, protobuf]
+  links:
+    - { url: "https://github.com/platform-boutique/app-ad-service/blob/main/src/main/proto/ad.proto", title: "ad.proto on GitHub", icon: code }
+spec:
+  type: grpc
+  lifecycle: experimental
+  owner: group:default/maintainers
+  system: shop
+  definition:
+    $text: ./src/main/proto/ad.proto
