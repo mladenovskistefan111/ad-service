@@ -14,11 +14,9 @@ metadata:
     argocd/app-name: dev-ad-service
     grafana/dashboard-selector: "tags @> 'ad'"
     grafana/alert-label-selector: "service=ad-service"
-    grafana/overview-dashboard: "https://grafana.platform-demo.test/d/ad-service-overview"
   tags: [java, grpc]
   links:
-    - { url: "https://argocd.platform-demo.test/applications/argocd/dev-ad-service", title: Argo CD, icon: dashboard }
-    - { url: "https://grafana.platform-demo.test/d/ad-service-overview", title: Grafana dashboard, icon: dashboard }
+    - { url: "https://argocd.platform-demo.click/applications/argocd/dev-ad-service", title: Argo CD, icon: dashboard }
 spec:
   type: service
   lifecycle: experimental
